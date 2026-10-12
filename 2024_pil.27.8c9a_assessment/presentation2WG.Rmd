@@ -1,0 +1,763 @@
+---
+title: "Sardine in the Cantabrian Sea and Atlantic Iberian waters (pil.27.8c9a)"
+subtitle: "`r lubridate::year(Sys.time())` assessment"
+author:
+institute: 
+date: "2024/11/27"
+output:
+  xaringan::moon_reader:
+    self_contained: true
+    css: [default, metropolis, metropolis-fonts]
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+      slideNumberFormat: |
+        <div class="progress-bar-container">
+          <div class="progress-bar" style="width: calc(%current% / %total% * 100%);">
+          </div>
+        </div>`
+  seal: false
+---
+<style>
+.remark-slide-number {
+  position: inherit;
+}
+
+.remark-slide-number .progress-bar-container {
+  position: absolute;
+  bottom: 0;
+  height: 4px;
+  display: block;
+  left: 0;
+  right: 0;
+}
+
+.remark-slide-number .progress-bar {
+  height: 100%;
+  background-color: grey;
+}
+</style>
+
+```{r setup, include=FALSE}
+options(
+  htmltools.dir.version  = FALSE,
+  htmltools.preserve.raw = FALSE # needed for windows
+)
+
+knitr::opts_chunk$set(fig.retina = 3, warning = FALSE, message = FALSE)
+
+library(xaringan)
+library(gt)
+library(r4ss)
+library(ggplot2)
+library(tidyverse)
+library(icesAdvice)
+library(FLCore)
+library(FLAssess)
+library(FLash)
+theme_set(theme_bw())
+
+ass.yr <- lubridate::year(Sys.Date())
+last.yr <- ass.yr-1
+```
+
+
+# Assessment model
+
+- [Stock Synthesis](https://vlab.noaa.gov/web/stock-synthesis/home) since 2012, NOAA ([Methot and Wetzel, 2013](https://www.sciencedirect.com/science/article/pii/S0165783612003293))
+
+- Updated to version in 3.30.22 2023
+
+
+- Age-based assuming a single area, fishery, season and genders combined.
+
+
+- Benchmark in February 2017 : 
+  - Method to estimate the initial population
+  - SR relationship (Berverton-Holt with $\sigma_{R}$ = 0.7 and steepness = 0.71)
+  - Selectivity-at-age for the spring acoustic survey and the fishery
+
+
+- Inter-Benchmark in October 2021 to include a recruitment index:
+ - Age 0 estimates of the autumn acoustic surveys in 9aCN area (1997-onwards)
+ - Abundance index with a power model for catchability
+ - Extra SD parameter for all abundance indexes
+ - Fine tuning ( $\sigma_{R}$ , recruitment deviations ramp)
+
+
+---
+# Current model settings and parameters
+
+```{r echo=FALSE}
+library(gt)
+read.csv("./boot/initial/data/ss3ModelStructure.csv") %>%
+  gt(groupname_col = "Group",
+     rowname_col = "What") %>%
+  tab_options(table.font.size = "65%",
+              column_labels.hidden = TRUE) %>%
+  cols_width(
+    c(What) ~ pct(23)
+  )%>%
+  tab_style(locations = cells_row_groups(), style = cell_text(weight = "bold"))
+```
+
+---
+# Input Data
+
+```{r echo=FALSE}
+read.csv("./boot/initial/data/DataInputTable.csv")%>%
+  gt() %>%
+  cols_label(
+    Data=md("**Data**"),
+    Year=md("**Years and age range**")
+  )%>%
+  cols_width(
+    c(Data) ~ pct(30)
+  )
+```
+
+
+```{r include=FALSE}
+
+#==============================================================================
+# RUN SS3 from r                                                           ----
+#==============================================================================
+# directory with ss3 input and output files of this year assessment
+dir.spaly  <- file.path("./model/run")
+
+#read outputs of the model
+
+spaly <- r4ss::SS_output(dir = dir.spaly,forecast=FALSE,verbose = TRUE, printstats = TRUE)
+
+#SS_plots(replist = spaly,dir = ".")
+###Plot for historical catch data (up to interim year)
+
+# read input files
+inputs <- r4ss::SS_read(dir = dir.spaly, verbose = TRUE)
+
+catch.endyr <- inputs$dat$catch$catch[inputs$dat$catch$year==ass.yr]
+
+# directory with ss3 input and output files of last assessment
+dir.base  <- c("./boot/initial/data/SS3_LastYearRun")
+
+#last years assessment
+base <- r4ss::SS_output(dir = dir.base,forecast=FALSE,verbose = FALSE, printstats = FALSE)
+
+```
+
+---
+
+# Input Data
+
+```{r out.width="70%", echo=F}
+knitr::include_graphics("./output/run/plots/data_plot2.png")
+```
+
+---
+
+# Time series
+
+```{r, include=FALSE}
+library(tidyverse)
+
+# ASSESSMENT this year
+  biomass.spaly<- subset(spaly$timeseries, Era=="TIME",c("Yr","Bio_smry"))
+  
+  linhas<-grep("SSB_\\d",spaly$derived_quants$Label)
+  cv.b<-data.frame(cv.b=spaly$derived_quants[linhas,"StdDev"]/spaly$derived_quants[linhas,"Value"])
+  cv.b$Yr<-spaly$startyr:(spaly$endyr)
+  
+  biomass.spaly<-merge(biomass.spaly,cv.b,by="Yr")
+  biomass.spaly$hi<-biomass.spaly$Bio_smry+2*biomass.spaly$cv.b*biomass.spaly$Bio_smry
+  biomass.spaly$lo<-biomass.spaly$Bio_smry-2*biomass.spaly$cv.b*biomass.spaly$Bio_smry
+  
+  biomass.spaly<-biomass.spaly[,-3]
+  colnames(biomass.spaly)[2]<-"Value"
+  biomass.spaly$indicator <- "B1+"
+  
+  biomass.spaly$run<-rep(ass.yr, nrow(biomass.spaly))
+  
+  # RECRUITMENT
+  
+  rec.spaly<- subset(spaly$timeseries, Era=="TIME",c("Yr","Recruit_0"))
+  
+  linhas<-grep("Recr_\\d",spaly$derived_quants$Label)
+  
+  cv.r<-data.frame(cv.r=spaly$derived_quants[linhas,"StdDev"]/spaly$derived_quants[linhas,"Value"])
+  cv.r$Yr<-spaly$startyr:spaly$endyr
+  
+  rec.spaly<-merge(rec.spaly,cv.r,by="Yr")
+  rec.spaly$hi<-rec.spaly$Recruit_0+2*rec.spaly$cv.r*rec.spaly$Recruit_0
+  rec.spaly$lo<-rec.spaly$Recruit_0-2*rec.spaly$cv.r*rec.spaly$Recruit_0
+  
+  rec.spaly<-rec.spaly[,-3]
+  colnames(rec.spaly)[2]<-"Value"
+  rec.spaly$indicator <- "Recruits"
+  
+  rec.spaly$run<-rep(ass.yr, nrow(rec.spaly))
+  
+  # FISHING MORTALITY 2-5 YEARS
+  
+  #Assessment 2023
+  
+  selectivity<-subset(spaly$ageselex[spaly$ageselex$Fleet==1 & spaly$ageselex$Factor=="Asel2" & spaly$ageselex$Yr %in% c(spaly$startyr:(spaly$endyr-1)),c("Yr","0","1","2","3","4","5","6") ])
+  
+  linhas<-grep("F_\\d",spaly$derived_quants$Label)
+  linhas<-linhas[-length(linhas)]
+  
+  f.apical<-data.frame(f=spaly$derived_quants[linhas,"Value"])
+  f.apical$Yr<-spaly$startyr:(spaly$endyr-1)
+  
+  
+  f.apsel<-merge(f.apical,selectivity,all.x = T,by="Yr")
+  
+  
+  f<-f.apsel$f*f.apsel[,c("0","1","2","3","4","5","6")]
+  f$Yr<-f.apsel$Yr
+  
+  refF<-apply(f[,c("2","3","4","5")],1,mean)
+  
+  f.spaly<-data.frame(Yr=f$Yr,Value=refF)
+  
+  cv.f<-data.frame(cv.f=spaly$derived_quants[linhas,"StdDev"]/spaly$derived_quants[linhas,"Value"])
+  cv.f$Yr<-spaly$startyr:(spaly$endyr-1)
+  
+  f.spaly<-merge(f.spaly,cv.f,by="Yr")
+  f.spaly$hi<-f.spaly$Value+2*f.spaly$cv.f*f.spaly$Value
+  f.spaly$lo<-f.spaly$Value-2*f.spaly$cv.f*f.spaly$Value
+  f.spaly$run<-rep(ass.yr, nrow(f.spaly))
+  f.spaly<-f.spaly[,-3]
+  f.spaly$indicator <- "Fbar[2-5]"
+  
+  rr <- bind_rows(biomass.spaly,rec.spaly,f.spaly)
+  
+```
+$B1^{+}$ variation of **`r  round((biomass.spaly$Value[biomass.spaly$Yr==ass.yr] - biomass.spaly$Value[biomass.spaly$Yr==last.yr])/biomass.spaly$Value[biomass.spaly$Yr==last.yr]*100,1)`%**,  $F_{bar[2-5]}$ variation of **`r  round((f.spaly$Value[f.spaly$Yr==last.yr] - f.spaly$Value[f.spaly$Yr==(last.yr-1)])/f.spaly$Value[f.spaly$Yr==(last.yr-1)]*100,0)`%**,  **Recruits** variation of **`r  round((rec.spaly$Value[rec.spaly$Yr==ass.yr] - rec.spaly$Value[rec.spaly$Yr==last.yr])/rec.spaly$Value[rec.spaly$Yr==last.yr]*100,0)`%**
+
+.pull-left[
+
+```{r echo=FALSE}
+
+  ggplot(rr, aes(x = Yr, y=Value)) +
+    facet_grid(indicator~. ,scales='free_y') +
+    geom_line(size=0.9) +
+    geom_ribbon(aes(ymin = lo, ymax = hi), colour = NA, alpha = 0.2,show.legend = F) +
+    theme(text = element_text(size = 10),
+          plot.background =	element_rect(colour = NA, fill = NA),
+          axis.text.x=element_text(size=10),
+          axis.text.y=element_text(size=10),
+          panel.grid.minor.x = element_blank(),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          legend.position = "bottom") +
+    labs(x="Year") + labs(y="") 
+  
+  
+```
+]
+
+.pull-right[
+
+- Spring acoustic survey decreases (in numbers) `r abs(round((subset(inputs$dat$CPUE, index==2 & year == 2024)$obs-subset(inputs$dat$CPUE, index==2 & year == 2023)$obs)/subset(inputs$dat$CPUE, index==2 & year == 2023)$obs*100,0))`%
+
+- Main recruitment area this year was 'back' in 9aCN
+
+```{r out.width="90%", echo=F}
+knitr::include_graphics("000014.png")
+```
+
+]
+
+---
+
+# `r ass.yr ` versus `r last.yr `
+
+### Biomass of Age 1 and older
+
+```{r include=FALSE}
+
+difyears <- list(base,spaly)
+sumdifYears <- r4ss::SSsummarize(biglist=difyears,verbose = FALSE)
+
+SSplotComparisons(sumdifYears,subplots = c(2,8,10,12),verbose = FALSE,plotdir = "./report",legendlabels = c("Last Year","This Year"),png=T,endyrvec = c(2026,2026))
+
+```
+
+```{r out.width="80%", echo=F}
+
+knitr::include_graphics("report/run/biomass.png")
+```
+
+---
+
+# `r ass.yr` versus `r last.yr `
+
+### Recruits
+
+```{r out.width="80%", echo=F}
+knitr::include_graphics("report/run/Recruits.png")
+```
+
+---
+
+# `r ass.yr ` versus `r last.yr `
+
+### Recruitment deviations
+
+ - Recruitment deviations shifted from positive in the 1980s to negative in the second half of the 2000s with the exception of 2019 and 2022 year classes
+ 
+```{r out.width="60%", echo=F}
+knitr::include_graphics("report/compare12_recdevs_uncertainty.png")
+```
+
+---
+
+# `r ass.yr ` versus `r last.yr `
+
+### Fishing mortality
+
+
+```{r out.width="80%", echo=F}
+knitr::include_graphics("report/run/fbar.png")
+```
+
+---
+
+# `r ass.yr ` versus `r last.yr `
+
+.pull-left[
+
+```{r echo=FALSE}
+
+tbl2 <- r4ss::SStableComparisons(sumdifYears, models = "all",verbose = FALSE)
+colnames(tbl2) <- c("Label", "Last Year","This Year")
+
+tbl2%>%
+  gt::gt()%>%
+  tab_style(locations = cells_column_labels(), style = cell_text(weight = "bold"))%>%
+  fmt_number(columns = 2:3)
+
+```
+
+]
+
+.pull-right[
+
+Recruitment index is modeled with a power function that is estimated to be very close to 1
+
+```{r, echo=F}
+
+qq <- spaly$index_variance_tuning_check[,c("Fleet","Q","RMSE")]
+tt <- base$index_variance_tuning_check[,c("Fleet","Q","RMSE")]
+
+qq$Advice <- ass.yr
+tt$Advice <- last.yr
+
+bind_rows(qq,tt)%>%
+  pivot_longer(names_to = "What", values_to = "value", c(Q, RMSE)) %>%
+  pivot_wider(id_cols=1,names_from=c("Advice", "What"),values_from = "value") %>%
+  mutate_at(vars(2:5), as.numeric) %>%
+  mutate_at("Fleet", factor, levels = 2:4, labels = c("Acoustic Survey","DEPM survey","Rec Survey")) %>%
+  gt::gt() %>%
+  fmt_missing(2:5) %>%
+  fmt_number(c(3,5), decimals = 2) %>%
+  fmt_scientific(c(2,4), decimals = 2) %>%
+    cols_merge(c("2024_Q", "2024_RMSE"), pattern = "{1} ({2})") %>%
+    cols_merge(c("2023_Q", "2023_RMSE"), pattern = "{1} ({2})") %>%
+  cols_label("2024_Q" = "2024", "2023_Q" = "2023") %>%
+   tab_spanner(
+    label = "Q (RMSE)",
+    columns = c("2024_Q", "2023_Q")
+  ) %>%
+  tab_style(locations=list(cells_column_labels(), cells_column_spanners()),
+            style=cell_text(weight='bold'))
+
+```
+
+]
+
+
+---
+# Catchability parameters
+
+
+```{r echo=F, out.height="80%"}
+tab1 <- spaly$estimated_non_dev_parameters%>%
+  rownames_to_column("Parameter") %>%
+  select(1:6, 8:9) %>%
+  filter(grepl("^(Ln)?Q_", Parameter)) %>%
+  gt::gt()%>%
+  fmt_number(c("Value", "Parm_StDev","Init")) %>%
+  fmt_scientific("Gradient") %>%
+  tab_style(locations=cells_column_labels(), style=cell_text(weight='bold'))%>%
+  tab_style(cell_fill(color = "lightblue"),
+    locations = cells_body(
+      columns = Value,
+      rows = Value >= 0.89))
+
+
+# tab2 <- base$estimated_non_dev_parameters%>%
+#   rownames_to_column("Parameter") %>%
+#   select(1:6, 8:9) %>%
+#   filter(grepl("^(Ln)?Q_", Parameter)) %>%
+#   gt::gt()%>%
+#   fmt_number(c("Value", "Parm_StDev")) %>%
+#   fmt_scientific("Gradient") %>%
+#   tab_style(locations=cells_column_labels(), style=cell_text(weight='bold'))%>%
+#   tab_style(cell_fill(color = "lightblue"),
+#     locations = cells_body(
+#       columns = Value,
+#       rows = Value >= 0.89))
+# 
+# gtTable = tab1
+# table1 = gtTable$`_data`
+# 
+# gtTable = tab2
+# table2 = gtTable$`_data`
+# 
+# fullTable = rbind(table1, table2)
+# 
+# gtTable = gt(fullTable) %>%
+#     tab_row_group(
+#         label = "2022 preliminary assessment",
+#         rows = 1:7
+#     ) %>% 
+#     tab_row_group(
+#         label = "2021 assessment",
+#         rows = 8:14
+#     )%>% 
+#     tab_style(
+#         style = list(
+#             cell_fill(color = "lightgray")
+#         ),
+#         locations = cells_row_groups()
+#     )%>%
+#     fmt_number(c("Value", "Parm_StDev")) %>%
+#     fmt_scientific("Gradient") %>%
+#     tab_style(locations=cells_column_labels(), style=cell_text(weight='bold'))%>%
+#     tab_style(cell_fill(color = "lightblue"),
+#               locations = cells_body(
+#                   columns = Value,
+#                   rows = Value >= 0.89))
+# 
+# gtTable
+
+tab1
+```
+
+
+---
+
+# Fit to the spring acoustic survey
+
+ - Good fit in 2024 (lower value), poor fits in the previous last 3 surveys, in particular 2023 (larger values)
+
+```{r out.width="90%", echo=F}
+knitr::include_graphics("report/run/index2_cpuefit_Acoustic_survey.png")
+```
+
+---
+# Fit to the DEPM survey
+
+- Last DEPM estimates included in 2023 same year as the DEPM survey
+- Very good fit for the 2023 DEPM survey.
+
+```{r out.width="95%", echo=F}
+knitr::include_graphics("report/run/index2_cpuefit_DEPM_survey.png")
+```
+
+---
+# Fit to the autumn acoustic survey
+
+```{r out.width="95%", echo=F}
+knitr::include_graphics("report/run/index2_cpuefit_Rec_survey.png")
+```
+
+---
+# Fit to the autumn acoustic survey
+
+ - Very good fit this year (2024) but poor in 2023.
+ 
+```{r out.width="95%", echo=F}
+knitr::include_graphics("report/run/index5_logcpuefit_Rec_survey.png")
+```
+
+---
+
+# Catch at age
+
+
+.pull-left[
+## Residuals
+```{r  echo=F}
+knitr::include_graphics("report/run/comp_agefit_residsflt1mkt0_page2.png")
+```
+]
+
+
+.pull-right[
+## Fit
+```{r  echo=F}
+knitr::include_graphics("report/run/comp_agefit_flt1mkt0_page2.png")
+```
+]
+
+---
+# Abundance at age
+
+
+.pull-left[
+## Residuals
+```{r  echo=F}
+knitr::include_graphics("report/run/comp_agefit_residsflt2mkt0_page2.png")
+```
+
+]
+
+.pull-right[
+## Fit
+
+```{r echo=F,out.width="50%"}
+knitr::include_graphics("report/run/comp_agefit_flt2mkt0_page1.png")
+knitr::include_graphics("report/run/comp_agefit_flt2mkt0_page2.png")
+```
+
+]
+
+
+---
+# Age composition overall fit
+
+- Overall fitting is very good
+
+```{r out.height="60%",out.width="60%", echo=F}
+knitr::include_graphics("report/run/comp_agefit__aggregated_across_time.png")
+```
+
+---
+# Stock-recruitment relationship
+
+- Estimate for 2024 recruitment is very similar to the SR relationship assumed in the model
+
+```{r out.height="60%", out.width="50%",echo=F}
+knitr::include_graphics("report/run/SR_curve2.png")
+```
+---
+class: inverse, center, middle
+
+# RETROSPECTIVE
+
+
+---
+# Retrospective Analysis
+
+- Mohn's rho values for B1+ the Rule of thumb for significant retrospective pattern by 0.01:
+
+ -- Short-lived stocks: Mohn's rho higher than 0.3 or lower than -0.22 [(Hurtado-Ferro et al., 2015](https://academic.oup.com/icesjms/article/72/1/99/2804338)
+
+
+- Retrospective pattern improved when compared to last year
+
+
+---
+
+# B1+ Retrospective
+
+.left-column[
+
+```{r, include = FALSE}
+load("./output/retro/retrospective.RData")
+```
+
+
+Mohn rho value of `r round(rho$Rho[rho$Label=="B1+"],3) `
+
+
+```{r, echo=F}
+
+bio$compare%>%
+  gt::gt()%>%
+  tab_style(locations = cells_column_labels(), style = cell_text(weight = "bold"))%>%
+  fmt_number(columns = 3)%>%
+  tab_options(table.font.size = "60%")
+
+
+```
+]
+
+.right-column[
+
+```{r, echo=F}
+knitr::include_graphics("report/retro/retroBio.png")
+
+```
+]
+---
+
+# Recruits Retrospective
+
+.left-column[
+
+Mohn rho value of `r round(rho$Rho[rho$Label=="Recruits"],3) `
+
+```{r, echo=F}
+
+rec$compare%>%
+  gt::gt()%>%
+  tab_style(locations = cells_column_labels(), style = cell_text(weight = "bold"))%>%
+  fmt_number(columns = 3)%>%
+  tab_options(table.font.size = "50%")
+
+```
+
+]
+
+.right-column[
+
+```{r, echo=F}
+  knitr::include_graphics("report/retro/retroRecruits.png")
+
+```
+]
+
+---
+
+# Fishing mortality Retrospective
+
+.left-column[
+
+Mohn rho value of `r round(rho$Rho[rho$Label=="Fbar2-5"],3) `
+
+```{r, echo=F}
+
+F25$compare%>%
+  gt::gt()%>%
+  tab_style(locations = cells_column_labels(), style = cell_text(weight = "bold"))%>%
+  fmt_number(columns = 1:3,n_sigfig = 2)%>%
+  tab_options(table.font.size = "60%")
+
+```
+]
+
+.right-column[
+
+```{r, echo=F}
+knitr::include_graphics("report/retro/retroFbar.png")
+
+```
+]
+
+---
+class: inverse, center, middle
+
+# SHORT TERM FORECAST
+
+---
+# Advice Basis
+
+- For 2025, the EU Commission requested ICES to provide advice based on the MSY approach
+
+  - Since $B1+_{2025}$ > $B_{pa}$ then $F_{2025}$ = $F_{MSY}$ = 0.092
+
+- The precautionary generic HCR should be included in the catch scenario table.
+
+```{r echo=FALSE, fig.dim=c(10,4)}
+load("./output/stf/STF_pil27.8c9a.RData")
+
+biomass <- seq(0,600000, by = 1000)
+
+#Specify the biomass and fishing mortality trigger points of the HCR
+Bloss <- 112943
+Flow <- 0.064
+Ftarget <- 0.12
+Bmsy <- 252523
+Bpa <- 446331
+
+Brefs <- c(Bloss,Bmsy,Bpa)
+
+
+b.pos <- findInterval(biomass, Brefs)
+Ftg   <- ifelse(b.pos==0,0,ifelse(b.pos == 1,(0-Flow)*Bloss/(Bmsy-Bloss) + (Flow/(Bmsy-Bloss))*biomass,
+                                  ifelse(b.pos == 2,(Flow-(Ftarget-Flow)*Bmsy/(Bpa-Bmsy)) + ((Ftarget-Flow)/(Bpa-Bmsy))*biomass,Ftarget)))
+
+data.frame(biomass = biomass, F = Ftg)%>%
+  ggplot(aes(x=biomass, y = F))+
+  geom_line()+
+  geom_vline(xintercept = round(stf_final[1,4],0),linetype="dashed")+
+  annotate("text", x = round(stf_final[1,4],0), y = 0, label = "B1+ in interim year + 1")+
+  geom_hline(yintercept = round(stf_final[length(stf_final$F)-3,5],4),linetype="dashed")+
+  annotate("text", y = round(stf_final[length(stf_final$F)-3,5],4)+0.005, x = 1.0e+5, label = "F in interim year + 1")
+
+```
+
+---
+# Basis for the catch scenarios
+
+- $F_{2024}$ = `r round(fbar(pil.stock_stf[,ac(ass.yr)]),3)` corresponding to `r as.character(round(catch(pil.stock_stf)[,ac(2024)],0))`
+- $B1+_{2024}$ = `r as.character(round(as.numeric(biomass(pil.stock_stf[,ac(ass.yr)])),0))` and $B1+_{2025}$ = `r as.character(round(stf_final[1,4],0))`
+
+```{r, echo=FALSE}
+load("./report/stf/tablesSTF.RData")
+
+tbl_stf_inputs
+```
+
+---
+# Catch scenarios
+
+```{r,echo=FALSE }
+stf_scenarios <- read.csv("./output/stf/Table_catch_scenarios.csv",sep=';')[1:9]
+
+stf_scenarios[,-7]%>%
+  gt(groupname_col = "Rule")%>%
+  tab_style(locations = cells_column_labels(), style = cell_text(weight = "bold"))%>%
+  tab_footnote(
+    footnote = "HCR capped. Ftgt = 0.12 with catches of 51 738 t",
+    locations = cells_body(columns = Basis, rows = 4:8),
+  )%>%
+   tab_footnote(
+    footnote = "* Biomass 1+ in 2026 relative to Biomass 1+ in 2025 (453 035 t).",
+    locations = cells_column_labels(columns = Biomass_change)
+  )%>%
+  tab_footnote(
+    footnote = "* Advised Catch in 2025 relative to Advised Catch in 2024 (38 992 t).",
+    locations = cells_column_labels(columns = Advice_change)
+  )%>%
+  tab_footnote(
+    footnote = "* Advised Catch in 2025 relative to sum of quotas (PT+SP) in 2024 (44 450 t).",
+    locations = cells_column_labels(columns = Quota_change)
+  )%>%
+  fmt_number(columns = c("Catch", "Biomass"),decimals = 0, sep_mark = " ") %>%
+  cols_label(
+    Catch = "Catch (2025)",
+    F = "F (2025)",
+    Biomass = "B1+ (2026)",
+    Biomass_change = "% Biomass change",
+    Advice_change = "% Advice change",
+    Quota_change = "% Quota change"
+  )%>%
+  tab_options(table.font.size = "70%")%>%
+  tab_options(data_row.padding = px(1))
+```
+
+
+---
+
+class: center, middle
+
+<big>Thanks!</big>
+
+```{r, echo=F, out.width="50%"}
+knitr::include_graphics("./boot/data/Sardina_pilchardus_Gervais.jpg")
+
+```
+
+--
+
+Questions?
+
+
+
+
